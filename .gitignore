@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+venv/
+
+data/
+*.pkl
+*.zip
+
+# Frontend dependencies/build
+frontend/node_modules/
+frontend/dist/
+
+# Generated output artifacts
+outputs/
+
+# Large raw GIS source bundles (do not commit to GitHub)
+southern-zone-260408-free.shp.zip
+data/southern-zone-260408-free.shp/
+
+# OS/editor noise
+.DS_Store

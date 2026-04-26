@@ -1,0 +1,208 @@
+GIS Safety Analysis Tool - Working, Methodology, Goals, and Intended Outcomes
+===========================================================================
+
+1) Project Goal
+---------------
+This project evaluates how suitable or risky a geographic location is, based on
+its proximity to:
+- Water bodies
+- Forest zones
+- Restricted/protected areas
+
+It aims to support safer and more compliant location screening for planning,
+survey, or preliminary feasibility checks.
+
+
+2) What The Project Tries To Achieve
+------------------------------------
+- Convert raw GIS layers into clean, analysis-ready datasets.
+- Compute distance-based environmental/legal risk indicators for a user-selected
+  latitude/longitude.
+- Classify each location into LOW, MEDIUM, or HIGH risk.
+- Expose results through:
+  - A Python map generation workflow (Folium HTML output), and
+  - A FastAPI backend + React frontend interactive app.
+- Provide interpretable results (risk level + explanation + distances).
+
+
+3) End-to-End Methodology
+-------------------------
+
+Stage A: Regional Filtering (Data Scope Reduction)
+- File: src/filtered_data.py
+- Inputs:
+  - OSM-derived South India shapefiles:
+    - gis_osm_water_a_free_1.shp
+    - gis_osm_landuse_a_free_1.shp
+    - gis_osm_protected_areas_a_free_1.shp
+  - Karnataka boundary shapefile: data/State/State.shp
+- Method:
+  - Reproject source layers to Karnataka boundary CRS.
+  - Intersect each layer with Karnataka boundary (GeoPandas overlay).
+- Outputs:
+  - data/water_karnataka.geojson
+  - data/landuse_karnataka.geojson
+  - data/protected_karnataka.geojson
+
+Why this stage exists:
+- Reduces large regional datasets to only the area of interest (Karnataka).
+- Improves runtime and avoids out-of-scope geometry.
+
+
+Stage B: Cleaning and Feature Selection
+- File: src/clean_data.py
+- Inputs:
+  - water_karnataka.geojson
+  - landuse_karnataka.geojson
+  - protected_karnataka.geojson
+- Method:
+  - Remove null/empty geometries.
+  - Repair invalid geometries using buffer(0).
+  - Keep only relevant categories:
+    - Water: fclass in [water, riverbank, wetland]
+    - Forest: fclass == forest (derived from landuse)
+    - Restricted: all protected features retained
+  - Simplify geometries with tolerance 0.00001.
+  - Reset indexes and persist cleaned layers.
+- Outputs:
+  - data/water_clean.geojson
+  - data/forest_clean.geojson
+  - data/restricted_clean.geojson
+
+Why this stage exists:
+- Produces stable geometries for spatial operations.
+- Removes noise and keeps only risk-relevant classes.
+
+
+Stage C: Spatial Analysis
+- File: src/spatial_engine.py
+- Inputs:
+  - Clean GeoJSON layers from Stage B.
+  - User coordinates (latitude, longitude).
+- Method:
+  - Load layers and reproject to EPSG:3857 for meter-based distance calculations.
+  - Convert user point from EPSG:4326 -> EPSG:3857.
+  - Compute minimum distance to each layer:
+    - water_distance_m
+    - forest_distance_m
+    - restricted_distance_m
+  - Derive boolean proximity/inside flags using thresholds:
+    - Water:
+      - in_water: distance < 50 m
+      - near_water: distance < 150 m
+    - Forest:
+      - in_forest: distance < 100 m
+      - near_forest: distance < 300 m
+    - Restricted:
+      - in_restricted: distance < 50 m
+      - near_restricted: distance < 100 m
+- Output:
+  - Structured dictionary with flags + distances.
+
+Important methodological note:
+- "Inside" is approximated by distance thresholds rather than strict
+  point-in-polygon checks. This is a pragmatic buffer-based heuristic.
+
+
+Stage D: Rule-Based Risk Classification
+- File: src/risk_engine.py
+- Input:
+  - Spatial result dictionary from Stage C.
+- Rule logic:
+  - HIGH risk if:
+    - in_water OR in_restricted
+  - MEDIUM risk (only if not HIGH) if:
+    - near_water OR near_forest OR near_restricted
+  - LOW risk if none of the above apply
+- Output:
+  - risk_level
+  - flags list
+  - human-readable explanation string
+
+Why this stage exists:
+- Provides transparent, explainable decision logic.
+- Easy to tune thresholds and policy rules.
+
+
+Stage E1: Folium Visualization Path (Python)
+- Files:
+  - src/main.py
+  - src/map_visualization.py
+- Method:
+  - Takes CLI lat/lon.
+  - Loads cleaned layers and styles them by category.
+  - Runs Stage C + Stage D.
+  - Adds marker, popup, legend, and floating risk panel.
+- Output:
+  - outputs/map.html
+
+
+Stage E2: API + Frontend Interactive Path
+- Backend file: src/api.py (FastAPI endpoint: POST /analyze)
+- Frontend files:
+  - frontend/src/App.jsx
+  - frontend/src/components/InputPanel.jsx
+  - frontend/src/components/MapView.jsx
+- Method:
+  - Frontend sends lat/lon to backend /analyze.
+  - Backend runs Stage C + Stage D and returns JSON:
+    - risk_level
+    - explanation
+    - distances
+  - Frontend shows marker, risk text, and optional layer overlays.
+
+
+4) Optional ML Component (Experimental/Parallel)
+------------------------------------------------
+- Training: src/train_model.py
+  - Trains DecisionTreeClassifier on small handcrafted examples.
+  - Saves model.pkl.
+- Inference: src/ml_model.py
+  - Predicts risk from three features:
+    - water_distance_m
+    - forest_distance_m
+    - restricted_distance_m
+- Demo script: src/test.py
+  - Prints spatial result + rule-based risk + ML prediction.
+
+Current status:
+- Main operational pipeline is rule-based.
+- ML exists as an auxiliary/experimental path and is not wired into API response.
+
+
+5) Core Inputs and Outputs Summary
+----------------------------------
+Inputs:
+- Raw shapefiles (regional OSM layers)
+- Karnataka boundary shapefile
+- User coordinates (lat/lon)
+
+Primary outputs:
+- Clean GIS layers (GeoJSON)
+- Risk classification + explanation + distances
+- Interactive or static map outputs
+
+
+6) Practical Use Cases
+----------------------
+- Initial site-risk screening before field visits.
+- Educational demonstration of GIS + API + frontend integration.
+- Baseline system for future planning/permit-aware geospatial tools.
+
+
+7) Known Methodological Constraints
+-----------------------------------
+- Threshold-based "inside" heuristics may differ from strict legal boundaries.
+- Accuracy depends on source GIS quality, currency, and class labeling.
+- EPSG:3857 distance calculations are practical but not geodesic-precise in all
+  contexts.
+- ML model is trained on very small synthetic data; it is not production-grade.
+
+
+8) Future Improvement Direction (Aligned With Project Aim)
+----------------------------------------------------------
+- Replace heuristic inside checks with strict geometry containment where needed.
+- Add confidence metrics and calibration for ML-assisted risk scoring.
+- Expand risk dimensions (slope, floodplain, infrastructure proximity, zoning).
+- Add dataset versioning and periodic data refresh workflow.
+- Add automated tests for threshold behavior and API contracts.
