@@ -13,7 +13,7 @@ import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
 
-const defaultCenter = [20.5937, 78.9629];
+const defaultCenter = [12.9716, 77.5946];
 const BACKEND_BASE_URL =
   import.meta.env.VITE_BACKEND_BASE_URL ?? "http://localhost:8000";
 const WATER_GEOJSON_URL =
@@ -51,11 +51,7 @@ function RecenterMap({ center }) {
       return;
     }
 
-    if (previousCenter) {
-      map.flyTo(center, 14);
-    } else {
-      map.setView(center, 14);
-    }
+    map.setView(center, 14, { animate: false });
 
     previousCenterRef.current = center;
   }, [center, map]);
@@ -93,7 +89,8 @@ async function loadGeoJson(url) {
 }
 
 function MapView({ position, analysis, onMapClick, onMarkerClick }) {
-  const center = position ? [position.lat, position.lon] : defaultCenter;
+  const markerPosition = position ? [position.lat, position.lon] : null;
+  const center = markerPosition ?? defaultCenter;
   const [waterLayer, setWaterLayer] = useState(null);
   const [forestLayer, setForestLayer] = useState(null);
   const [restrictedLayer, setRestrictedLayer] = useState(null);
@@ -177,9 +174,10 @@ function MapView({ position, analysis, onMapClick, onMarkerClick }) {
           )}
         </LayersControl>
 
-        {position && (
+        {markerPosition && (
           <Marker
-            position={center}
+            key={`${position.lat}:${position.lon}`}
+            position={markerPosition}
             icon={locationIcon}
             eventHandlers={markerEventHandlers}
           />

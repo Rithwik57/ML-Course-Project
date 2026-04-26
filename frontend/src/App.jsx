@@ -96,15 +96,29 @@ async function fetchRiskAnalysis(latitude, longitude) {
 function App() {
   const [latitude, setLatitude] = useState("");
   const [longitude, setLongitude] = useState("");
-  const [position, setPosition] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [status, setStatus] = useState("Enter coordinates and click Check Risk.");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
+  const hasLatitudeInput = String(latitude).trim() !== "";
+  const hasLongitudeInput = String(longitude).trim() !== "";
+  const parsedLatitude = hasLatitudeInput ? Number(latitude) : Number.NaN;
+  const parsedLongitude = hasLongitudeInput ? Number(longitude) : Number.NaN;
+  const hasValidPosition =
+    Number.isFinite(parsedLatitude) &&
+    Number.isFinite(parsedLongitude) &&
+    parsedLatitude >= -90 &&
+    parsedLatitude <= 90 &&
+    parsedLongitude >= -180 &&
+    parsedLongitude <= 180;
+
+  const position = hasValidPosition
+    ? { lat: parsedLatitude, lon: parsedLongitude }
+    : null;
+
   const setSelectedLocation = (lat, lon) => {
-    setLatitude(lat);
-    setLongitude(lon);
-    setPosition({ lat, lon });
+    setLatitude(String(lat));
+    setLongitude(String(lon));
   };
 
   const renderRiskDetails = (details) => {
@@ -136,22 +150,14 @@ function App() {
   };
 
   const handleCheckRisk = async () => {
-    const targetLat = Number(latitude);
-    const targetLon = Number(longitude);
-
-    if (
-      !Number.isFinite(targetLat) ||
-      !Number.isFinite(targetLon) ||
-      targetLat < -90 ||
-      targetLat > 90 ||
-      targetLon < -180 ||
-      targetLon > 180
-    ) {
+    if (!hasValidPosition || !position) {
       setStatus("Please enter valid latitude and longitude values.");
       return;
     }
 
-    setSelectedLocation(targetLat, targetLon);
+    const targetLat = position.lat;
+    const targetLon = position.lon;
+
     setStatus("Checking risk level...");
     setAnalysis(null);
     renderRiskDetails({
