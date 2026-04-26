@@ -1,48 +1,61 @@
+from __future__ import annotations
+
 from pathlib import Path
-import site
-import sys
+
+import joblib
+import pandas as pd
 
 
-def _bootstrap_venv_packages() -> None:
-    """Add project venv site-packages so imports work from project root."""
-    project_root = Path(__file__).resolve().parent.parent
-    lib_dir = project_root / "venv" / "lib"
-    if not lib_dir.exists():
-        return
-
-    versioned_site = lib_dir / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
-    if versioned_site.exists():
-        site.addsitedir(str(versioned_site))
-        return
-
-    fallback = sorted(lib_dir.glob("python*/site-packages"))
-    if fallback:
-        site.addsitedir(str(fallback[0]))
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATASET_PATH = PROJECT_ROOT / "data" / "training_dataset.csv"
+MODEL_PATH = PROJECT_ROOT / "model.pkl"
+ENCODER_PATH = PROJECT_ROOT / "label_encoder.pkl"
+FEATURE_COLUMNS_PATH = PROJECT_ROOT / "feature_columns.pkl"
 
 
-_bootstrap_venv_packages()
+def load_artifacts():
+    missing = [
+        str(path)
+        for path in [MODEL_PATH, ENCODER_PATH, FEATURE_COLUMNS_PATH, DATASET_PATH]
+        if not path.exists()
+    ]
+    if missing:
+        raise FileNotFoundError(
+            "Required files not found. Run `python src/train_model.py` first. Missing:\n"
+            + "\n".join(missing)
+        )
 
-from spatial_engine import analyze_location
-from risk_engine import classify_risk
-from ml_model import predict_risk_ml
+    model = joblib.load(MODEL_PATH)
+    label_encoder = joblib.load(ENCODER_PATH)
+    feature_columns = joblib.load(FEATURE_COLUMNS_PATH)
+    df = pd.read_csv(DATASET_PATH)
 
-lat = 12.9300
-lon = 77.6700
+    return model, label_encoder, feature_columns, df
 
-# Step 1: Spatial
-result = analyze_location(lat, lon)
 
-# Step 2: Rule-based risk
-rule_risk = classify_risk(result)
+def run_smoke_test(sample_count: int = 5) -> None:
+    model, label_encoder, feature_columns, df = load_artifacts()
 
-# Step 3: ML risk
-ml_risk = predict_risk_ml(result)
+    sample_df = df.sample(n=min(sample_count, len(df)), random_state=42).copy()
+    x_sample = sample_df[feature_columns]
 
-print("\n=== SPATIAL RESULT ===")
-print(result)
+    encoded_pred = model.predict(x_sample)
+    decoded_pred = label_encoder.inverse_transform(encoded_pred)
 
-print("\n=== RULE-BASED RISK ===")
-print(rule_risk)
+    results = sample_df[["latitude", "longitude", "risk_label"]].copy()
+    results["predicted_label"] = decoded_pred
+    results["match"] = results["risk_label"] == results["predicted_label"]
 
-print("\n=== ML MODEL RISK ===")
-print(ml_risk)
+    print("\n=== Inference Smoke Test ===")
+    print(f"Loaded model: {type(model).__name__}")
+    print(f"Samples tested: {len(results)}")
+    print(results.to_string(index=False))
+    print(f"\nSample agreement: {results['match'].mean() * 100:.2f}%")
+
+
+def main() -> None:
+    run_smoke_test(sample_count=8)
+
+
+if __name__ == "__main__":
+    main()

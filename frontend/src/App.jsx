@@ -6,58 +6,200 @@ const BACKEND_BASE_URL =
   import.meta.env.VITE_BACKEND_BASE_URL ?? "http://localhost:8000";
 const ANALYZE_API_URL = `${BACKEND_BASE_URL}/analyze`;
 
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 function formatDistanceLabel(key) {
   return key
-    .replace(/_distance_m$/i, "")
+    .replace(/_m$/i, "")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function buildRiskDetailsHtml(details) {
-  if (!details) {
-    return "";
-  }
+function parseAnalyzePayload(payload) {
+  const riskPredicted =
+    typeof payload?.risk?.predicted === "string" && payload.risk.predicted
+      ? payload.risk.predicted.toUpperCase()
+      : typeof payload?.risk_level === "string" && payload.risk_level
+        ? payload.risk_level.toUpperCase()
+        : "UNKNOWN";
 
-  if (!details.riskLevel) {
-    return `
-      <section class="risk-details-card">
-        <h3 class="risk-details-title">Selected Location</h3>
-        <p class="risk-details-line">Checking risk...</p>
-      </section>
-    `;
-  }
+  const riskFinal =
+    typeof payload?.risk?.final === "string" && payload.risk.final
+      ? payload.risk.final.toUpperCase()
+      : riskPredicted;
 
-  const distances = details.distances && typeof details.distances === "object"
-    ? Object.entries(details.distances)
+  const confidence = Number(payload?.confidence?.predicted_class);
+  const confidencePct = Number.isFinite(confidence)
+    ? Math.max(0, Math.min(100, confidence * 100))
+    : null;
+
+  const topAiReasons = Array.isArray(payload?.top_ai_reasons)
+    ? payload.top_ai_reasons
     : [];
 
-  const distancesHtml =
-    distances.length > 0
-      ? `<ul class="risk-details-list">${distances
-          .map(
-            ([key, value]) =>
-              `<li><strong>${escapeHtml(formatDistanceLabel(key))}:</strong> ${escapeHtml(value)} m</li>`,
-          )
-          .join("")}</ul>`
-      : `<p class="risk-details-line">No distance data available.</p>`;
+  const featureImportance = Array.isArray(payload?.feature_importance?.top_factors)
+    ? payload.feature_importance.top_factors
+    : topAiReasons;
 
-  return `
-    <section class="risk-details-card">
-      <h3 class="risk-details-title">Marker Details</h3>
-      <p class="risk-details-line"><strong>Risk Level:</strong> ${escapeHtml(details.riskLevel)}</p>
-      <p class="risk-details-line">${escapeHtml(details.explanation || "No explanation provided.")}</p>
-      ${distancesHtml}
+  return {
+    riskFinal,
+    riskPredicted,
+    confidencePct,
+    classProbabilities:
+      payload?.confidence?.class_probabilities &&
+      typeof payload.confidence.class_probabilities === "object"
+        ? payload.confidence.class_probabilities
+        : {},
+    topAiReasons,
+    featureImportance,
+    featureImportanceMethod:
+      typeof payload?.feature_importance?.method === "string"
+        ? payload.feature_importance.method
+        : "unknown",
+    legalFlags: Array.isArray(payload?.legal_flags) ? payload.legal_flags : [],
+    environmentalFlags: Array.isArray(payload?.environmental_flags)
+      ? payload.environmental_flags
+      : [],
+    distances:
+      payload?.distances && typeof payload.distances === "object"
+        ? payload.distances
+        : {},
+    explanation:
+      typeof payload?.explanation === "string" && payload.explanation.trim()
+        ? payload.explanation
+        : "No explanation provided.",
+  };
+}
+
+function riskClassName(level) {
+  if (level === "HIGH") return "risk-pill high";
+  if (level === "MEDIUM") return "risk-pill medium";
+  if (level === "LOW") return "risk-pill low";
+  return "risk-pill unknown";
+}
+
+function AnalysisPanel({ analysis }) {
+  if (!analysis) {
+    return (
+      <section className="insight-card">
+        <h3 className="insight-title">AI Predicted Risk</h3>
+        <p className="insight-muted">Select a location and click Check Risk.</p>
+      </section>
+    );
+  }
+
+  const probabilityRows = Object.entries(analysis.classProbabilities);
+  const distanceRows = Object.entries(analysis.distances);
+
+  return (
+    <section className="insight-card">
+      <h3 className="insight-title">AI Predicted Risk</h3>
+
+      <div className="risk-row">
+        <span className={riskClassName(analysis.riskFinal)}>{analysis.riskFinal}</span>
+        <span className="risk-sub">Model: {analysis.riskPredicted}</span>
+      </div>
+
+      <p className="insight-line">
+        <strong>Confidence:</strong>{" "}
+        {analysis.confidencePct === null ? "N/A" : `${analysis.confidencePct.toFixed(2)}%`}
+      </p>
+
+      <p className="insight-line">{analysis.explanation}</p>
+
+      {probabilityRows.length > 0 && (
+        <div className="insight-section">
+          <h4>Class Probabilities</h4>
+          <ul className="plain-list">
+            {probabilityRows.map(([label, value]) => (
+              <li key={label}>
+                <strong>{label}:</strong> {(Number(value) * 100).toFixed(2)}%
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="insight-section">
+        <h4>Top AI Influencing Factors</h4>
+        {analysis.topAiReasons.length === 0 ? (
+          <p className="insight-muted">No AI factors available.</p>
+        ) : (
+          <ul className="plain-list">
+            {analysis.topAiReasons.map((item, index) => (
+              <li key={`${item.feature ?? "feature"}-${index}`}>
+                <strong>{item.reason ?? item.feature}:</strong>{" "}
+                {Number(item.percentage ?? 0).toFixed(2)}%
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="insight-section">
+        <h4>Feature Importance ({analysis.featureImportanceMethod})</h4>
+        {analysis.featureImportance.length === 0 ? (
+          <p className="insight-muted">No feature importance data available.</p>
+        ) : (
+          <div className="importance-list">
+            {analysis.featureImportance.map((item, index) => {
+              const pct = Math.max(0, Math.min(100, Number(item.percentage ?? 0)));
+              return (
+                <div className="importance-item" key={`${item.feature ?? "importance"}-${index}`}>
+                  <div className="importance-header">
+                    <span>{item.feature ?? "feature"}</span>
+                    <span>{pct.toFixed(2)}%</span>
+                  </div>
+                  <div className="importance-bar-track">
+                    <div className="importance-bar-fill" style={{ width: `${pct}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="insight-section">
+        <h4>Legal Flags</h4>
+        {analysis.legalFlags.length === 0 ? (
+          <p className="insight-muted">None</p>
+        ) : (
+          <ul className="plain-list">
+            {analysis.legalFlags.map((flag, index) => (
+              <li key={`legal-${index}`}>{flag}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="insight-section">
+        <h4>Environmental Flags</h4>
+        {analysis.environmentalFlags.length === 0 ? (
+          <p className="insight-muted">None</p>
+        ) : (
+          <ul className="plain-list">
+            {analysis.environmentalFlags.map((flag, index) => (
+              <li key={`env-${index}`}>{flag}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="insight-section">
+        <h4>Distances</h4>
+        {distanceRows.length === 0 ? (
+          <p className="insight-muted">No distance data available.</p>
+        ) : (
+          <ul className="plain-list">
+            {distanceRows.map(([key, value]) => (
+              <li key={key}>
+                <strong>{formatDistanceLabel(key)}:</strong> {Number(value).toFixed(2)} m
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </section>
-  `;
+  );
 }
 
 async function fetchRiskAnalysis(latitude, longitude) {
@@ -77,20 +219,7 @@ async function fetchRiskAnalysis(latitude, longitude) {
   }
 
   const payload = await response.json();
-  return {
-    riskLevel:
-      typeof payload.risk_level === "string" && payload.risk_level.trim()
-        ? payload.risk_level.toUpperCase()
-        : "UNKNOWN",
-    explanation:
-      typeof payload.explanation === "string" && payload.explanation.trim()
-        ? payload.explanation
-        : "No explanation provided.",
-    distances:
-      payload.distances && typeof payload.distances === "object"
-        ? payload.distances
-        : {},
-  };
+  return parseAnalyzePayload(payload);
 }
 
 function App() {
@@ -119,14 +248,6 @@ function App() {
   const setSelectedLocation = (lat, lon) => {
     setLatitude(String(lat));
     setLongitude(String(lon));
-  };
-
-  const renderRiskDetails = (details) => {
-    const container = document.getElementById("risk-details");
-    if (!container) {
-      return;
-    }
-    container.innerHTML = buildRiskDetailsHtml(details);
   };
 
   const handleLatitudeChange = (value) => {
@@ -160,26 +281,26 @@ function App() {
 
     setStatus("Checking risk level...");
     setAnalysis(null);
-    renderRiskDetails({
-      riskLevel: null,
-      explanation: "Checking risk...",
-      distances: {},
-    });
 
     try {
       const nextAnalysis = await fetchRiskAnalysis(targetLat, targetLon);
       setAnalysis(nextAnalysis);
-      setStatus(`Risk check complete: ${nextAnalysis.riskLevel}`);
-      renderRiskDetails(nextAnalysis);
+      setStatus(`Risk check complete: ${nextAnalysis.riskFinal}`);
     } catch (error) {
-      const failedAnalysis = {
-        riskLevel: "ERROR",
-        explanation: "Unable to fetch risk from backend.",
+      setAnalysis({
+        riskFinal: "ERROR",
+        riskPredicted: "UNKNOWN",
+        confidencePct: null,
+        classProbabilities: {},
+        topAiReasons: [],
+        featureImportance: [],
+        featureImportanceMethod: "unknown",
+        legalFlags: [],
+        environmentalFlags: [],
         distances: {},
-      };
-      setAnalysis(failedAnalysis);
+        explanation: "Unable to fetch risk from backend.",
+      });
       setStatus("Request failed. Please make sure backend is running.");
-      renderRiskDetails(failedAnalysis);
     }
   };
 
@@ -239,7 +360,7 @@ function App() {
             onCheckRisk={handleCheckRisk}
           />
           <p className="status">{status}</p>
-          <div id="risk-details" className="risk-details" />
+          <AnalysisPanel analysis={analysis} />
         </div>
       </div>
       

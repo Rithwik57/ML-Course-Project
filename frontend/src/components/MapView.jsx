@@ -25,6 +25,9 @@ const FOREST_GEOJSON_URL =
 const RESTRICTED_GEOJSON_URL =
   import.meta.env.VITE_RESTRICTED_GEOJSON_URL ??
   `${BACKEND_BASE_URL}/data/restricted_clean.geojson`;
+const AI_RISK_SURFACE_GEOJSON_URL =
+  import.meta.env.VITE_AI_RISK_SURFACE_GEOJSON_URL ??
+  `${BACKEND_BASE_URL}/data/karnataka_ai_risk_surface.geojson`;
 
 const locationIcon = L.icon({
   iconRetinaUrl: markerIcon2x,
@@ -80,6 +83,14 @@ function createLayerStyle(color) {
   };
 }
 
+function riskColor(level) {
+  const normalized = String(level ?? "").toUpperCase();
+  if (normalized === "HIGH") return "#c62828";
+  if (normalized === "MEDIUM") return "#f9a825";
+  if (normalized === "LOW") return "#2e7d32";
+  return "#546e7a";
+}
+
 async function loadGeoJson(url) {
   const response = await fetch(url);
   if (!response.ok) {
@@ -88,12 +99,13 @@ async function loadGeoJson(url) {
   return response.json();
 }
 
-function MapView({ position, analysis, onMapClick, onMarkerClick }) {
+function MapView({ position, onMapClick, onMarkerClick }) {
   const markerPosition = position ? [position.lat, position.lon] : null;
   const center = markerPosition ?? defaultCenter;
   const [waterLayer, setWaterLayer] = useState(null);
   const [forestLayer, setForestLayer] = useState(null);
   const [restrictedLayer, setRestrictedLayer] = useState(null);
+  const [aiRiskSurfaceLayer, setAiRiskSurfaceLayer] = useState(null);
 
   const markerEventHandlers = useMemo(
     () => ({
@@ -112,10 +124,11 @@ function MapView({ position, analysis, onMapClick, onMarkerClick }) {
     let isMounted = true;
 
     async function loadLayers() {
-      const [waterResult, forestResult, restrictedResult] = await Promise.allSettled([
+      const [waterResult, forestResult, restrictedResult, aiSurfaceResult] = await Promise.allSettled([
         loadGeoJson(WATER_GEOJSON_URL),
         loadGeoJson(FOREST_GEOJSON_URL),
         loadGeoJson(RESTRICTED_GEOJSON_URL),
+        loadGeoJson(AI_RISK_SURFACE_GEOJSON_URL),
       ]);
 
       if (!isMounted) {
@@ -132,6 +145,10 @@ function MapView({ position, analysis, onMapClick, onMarkerClick }) {
 
       if (restrictedResult.status === "fulfilled") {
         setRestrictedLayer(restrictedResult.value);
+      }
+
+      if (aiSurfaceResult.status === "fulfilled") {
+        setAiRiskSurfaceLayer(aiSurfaceResult.value);
       }
     }
 
@@ -170,6 +187,31 @@ function MapView({ position, analysis, onMapClick, onMarkerClick }) {
           {restrictedLayer && (
             <LayersControl.Overlay checked name="Restricted Areas">
               <GeoJSON data={restrictedLayer} style={createLayerStyle("#c62828")} />
+            </LayersControl.Overlay>
+          )}
+
+          {aiRiskSurfaceLayer && (
+            <LayersControl.Overlay name="AI Statewide Risk Surface">
+              <GeoJSON
+                data={aiRiskSurfaceLayer}
+                pointToLayer={(feature, latlng) => {
+                  const predictedRisk = feature?.properties?.predicted_risk;
+                  return L.circleMarker(latlng, {
+                    radius: 4,
+                    color: riskColor(predictedRisk),
+                    fillColor: riskColor(predictedRisk),
+                    fillOpacity: 0.55,
+                    weight: 1,
+                  });
+                }}
+                onEachFeature={(feature, layer) => {
+                  const predictedRisk = feature?.properties?.predicted_risk ?? "UNKNOWN";
+                  const confidence = Number(feature?.properties?.confidence ?? 0);
+                  layer.bindPopup(
+                    `<strong>AI Risk:</strong> ${predictedRisk}<br/><strong>Confidence:</strong> ${(confidence * 100).toFixed(2)}%`
+                  );
+                }}
+              />
             </LayersControl.Overlay>
           )}
         </LayersControl>
