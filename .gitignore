@@ -4,6 +4,7 @@ __pycache__/
 
 # Virtual environment
 venv/
+.venv/
 
 data/
 *.pkl
@@ -22,3 +23,7 @@ data/southern-zone-260408-free.shp/
 
 # OS/editor noise
 .DS_Store
+.vscode/
+
+# Local runtime logs
+*.log

@@ -1,5 +1,8 @@
 import geopandas as gpd
-from shapely.geometry import Point
+from shapely.geometry import Point, shape
+from shapely.ops import transform, unary_union
+from pyproj import Transformer
+import fiona
 import joblib
 import pandas as pd
 import os
@@ -38,11 +41,54 @@ except FileNotFoundError:
     ml_model = None
 
 
+def _load_karnataka_boundary_union():
+    boundary_paths = [
+        "data/State/State.shp",
+    ]
+
+    for boundary_path in boundary_paths:
+        if not os.path.exists(boundary_path):
+            continue
+
+        try:
+            with fiona.open(boundary_path, ignore_fields=["created_da", "last_edi_1"]) as source:
+                geometries = [shape(feature["geometry"]) for feature in source if feature.get("geometry") is not None]
+                if not geometries:
+                    continue
+
+                boundary_union = unary_union(geometries)
+
+                source_crs = source.crs_wkt if source.crs_wkt else source.crs
+                if source_crs:
+                    transformer = Transformer.from_crs(source_crs, "EPSG:4326", always_xy=True)
+                    boundary_union = transform(transformer.transform, boundary_union)
+
+                return boundary_union
+        except Exception:
+            continue
+
+    return None
+
+
+KARNATAKA_BOUNDARY_UNION = _load_karnataka_boundary_union()
+
+
 def analyze_location(lat: float, lon: float):
+    point_wgs84 = Point(lon, lat)
+
+    if KARNATAKA_BOUNDARY_UNION is not None and not KARNATAKA_BOUNDARY_UNION.covers(point_wgs84):
+        return {
+            "risk_level": "COMING_SOON",
+            "explanation": "Risk analysis outside Karnataka borders is coming soon.",
+            "distances": {},
+            "topography": {},
+            "landcover_class": "OUTSIDE_KARNATAKA",
+        }
+
     # -------------------------
     # 1. EXACT VECTOR DISTANCES
     # -------------------------
-    point = gpd.GeoSeries([Point(lon, lat)], crs="EPSG:4326").to_crs(epsg=3857)[0]
+    point = gpd.GeoSeries([point_wgs84], crs="EPSG:4326").to_crs(epsg=3857)[0]
     
     forest_dist = float(forest.distance(point).min()) if not forest.empty else 9999
     restricted_dist = float(restricted.distance(point).min()) if not restricted.empty else 9999
